@@ -27,6 +27,23 @@ A projekt egy `ttsauto` nevű Bash függvényt tartalmaz, amely automatizálja a
 
 A sikeres futás végén két sor jelenik meg: az API-kulcs, illetve az alap URL, amelyet a TTS végpontokhoz használhatsz.
 
+### Használat `~/.bashrc`-ból
+
+Ha szeretnéd, hogy a `ttsauto` parancs minden új Bash sessionben automatikusan elérhető legyen, add hozzá a scriptet a `~/.bashrc` fájlodhoz:
+
+```bash
+# ~/.bashrc
+source /teljes/eleresi/ut/ttsauto.sh
+```
+
+A módosítás után töltsd be újra a `~/.bashrc`-t:
+
+```bash
+source ~/.bashrc
+```
+
+Ezután a `ttsauto` bárhonnan meghívható.
+
 ## Figyelmeztetés
 
 A script demonstrációs célra készült; éles környezetben alkalmazz megfelelő jogosultság- és erőforrás-kezelési szabályzatokat.
