@@ -1,12 +1,12 @@
 # azure-tts-f0-apikey-generator
 
-A projekt egy `ttsauto` nevű Bash függvényt tartalmaz, amely automatizálja az Azure Speech Service F0 (ingyenes) SKU létrehozását és az API-kulcs lekérését. A script ellenőrzi a meglévő erőforrásokat, teszteli a meglévő kulcsokat, majd szükség esetén új F0 fiókot hoz létre és visszaadja a kulcsot és az alapvégpontot.
+Ez a projekt egy `ttsauto` nevű Bash függvényt tartalmaz, amely automatizálja az Azure Speech Services F0 (ingyenes) SKU létrehozását és az API-kulcs lekérését. A script először megpróbálja használni a meglévő erőforrásokat, majd szükség esetén törli a hibás F0 fiókokat, új régiót választ, és friss kulcsot állít elő.
 
 ## Követelmények
 
 - Azure előfizetés és aktív bejelentkezés (`az login`)
-- Azure CLI
-- Bash shell
+- Azure CLI (2.49+ ajánlott)
+- Bash shell (pl. Azure Cloud Shell)
 
 ## Használat
 
@@ -18,33 +18,38 @@ A projekt egy `ttsauto` nevű Bash függvényt tartalmaz, amely automatizálja a
    ```bash
    ttsauto
    ```
-   A parancs lépésről lépésre:
-   - listázza a meglévő SpeechServices fiókokat és kipróbálja a TTS-hívást
-   - ellenőrzi, hogy van-e már F0 SKU-s fiók
-   - ha szükséges, létrehozza az `rg-speech-demo` erőforráscsoportot
-   - kiválaszt egy szabad régiót és létrehoz egy új F0 fiókot
-   - kiírja az elsődleges kulcsot és a bázis URL-t
 
-A sikeres futás végén két sor jelenik meg: az API-kulcs, illetve az alap URL, amelyet a TTS végpontokhoz használhatsz.
+Futás közben a script:
+- listázza a meglévő SpeechServices fiókokat, és TTS-próbahívást végez minden elérhető kulccsal;
+- eltárolja a legutóbb használt F0 régiót (`~/.ttsauto_last_region`), hogy a következő futásnál más lokációt választhasson;
+- ha van aktív F0 fiók és a próbahívás nem sikerül, törli azt, majd szükség esetén soft delete purge-öt indít és vár néhány másodpercet a felszabaduláshoz;
+- a már létező régiókat kihagyva véletlenszerűen választ új régiót az F0 fiókhoz;
+- biztosítja, hogy az `rg-speech-demo` erőforráscsoport létezzen, majd létrehozza az új F0 fiókot;
+- a végén kiírja az elsődleges kulcsot és az alapvégpont URL-t.
+
+Sikeres futás esetén két sor jelenik meg: az API-kulcs, valamint az alap URL, amelyet a TTS végpontokhoz használhatsz.
 
 ### Használat `~/.bashrc`-ból
 
-Ha szeretnéd, hogy a `ttsauto` parancs minden új Bash sessionben automatikusan elérhető legyen, add hozzá a scriptet a `~/.bashrc` fájlodhoz:
+Ha szeretnéd, hogy a `ttsauto` parancs minden új Bash sessionben elérhető legyen, add hozzá a scriptet a `~/.bashrc` fájlodhoz:
 
 ```bash
 # ~/.bashrc
-source /teljes/eleresi/ut/ttsauto.sh
+source /teljes/elérési/út/ttsauto.sh
 ```
 
-A módosítás után töltsd be újra a `~/.bashrc`-t:
+A módosítás után töltsd be újra:
 
 ```bash
 source ~/.bashrc
 ```
 
-Ezután a `ttsauto` bárhonnan meghívható.
+### Naplózás és hibaelhárítás
+
+- A script minden lépést `[L<n>]` jelöléssel ír ki, így könnyű nyomon követni a futást.
+- Ha a törlés vagy a purge hibát ad, a konzolon megjelenik az Azure CLI részletes üzenete.
+- A `~/.ttsauto_last_region` fájlt törölheted, ha régiórotáció nélkül szeretnéd újra futtatni a scriptet.
 
 ## Figyelmeztetés
 
-A script demonstrációs célra készült; éles környezetben alkalmazz megfelelő jogosultság- és erőforrás-kezelési szabályzatokat.
-
+A script demonstrációs célra készült; éles környezetben alkalmazz megfelelő jogosultság- és erőforrás-kezelési szabályokat.
