@@ -28,6 +28,12 @@ ttsauto() {
     "westeurope" "northeurope" "francecentral" "germanywestcentral"
     "swedencentral" "uksouth" "italynorth" "spaineast"
   )
+  local STATE_FILE="${HOME}/.ttsauto_last_region"
+  local PREV_REGION=""
+  if [ -f "$STATE_FILE" ]; then
+    read -r PREV_REGION < "$STATE_FILE" || PREV_REGION=""
+  fi
+  local F0_ACC_NAME="" F0_ACC_RG="" F0_ACC_LOC=""
 
   step() { echo "[L${1}] ${2}"; }
   fail() { echo "Hiba: ${1}"; }
@@ -45,6 +51,21 @@ ttsauto() {
   step 2 "F0-limit ellenőrzése";
   local F0_COUNT; F0_COUNT=$(az cognitiveservices account list --query "length([?kind=='SpeechServices' && sku.name=='F0'])" -o tsv 2>/dev/null || echo 0)
   echo "  - F0 darab: ${F0_COUNT}"
+
+  if [ "${#ACCS[@]}" -gt 0 ]; then
+    for rec in "${ACCS[@]}"; do
+      if [ "$(awk '{print $4}' <<<"$rec")" = "F0" ]; then
+        F0_ACC_NAME=$(awk '{print $1}' <<<"$rec")
+        F0_ACC_RG=$(awk '{print $2}' <<<"$rec")
+        F0_ACC_LOC=$(awk '{print $3}' <<<"$rec")
+        break
+      fi
+    done
+  fi
+  if [ "$F0_COUNT" -ge 1 ] && [ -n "$F0_ACC_LOC" ]; then
+    PREV_REGION="$F0_ACC_LOC"
+    printf '%s\n' "$PREV_REGION" > "$STATE_FILE"
+  fi
 
   step 3 "TTS próbahívás a meglévő kulcsokkal";
   if [ "${#ACCS[@]}" -gt 0 ]; then
@@ -92,18 +113,50 @@ ttsauto() {
   fi
 
   if [ "${F0_COUNT}" -ge 1 ]; then
-    fail "van már érvényes F0 az előfizetésben, új kulcs nem hozható létre"; return 1
+    if [ -n "$F0_ACC_NAME" ] && [ -n "$F0_ACC_RG" ]; then
+      echo "  - F0 kulcs törlése: ${F0_ACC_NAME} (loc:${F0_ACC_LOC})"
+      if ! az cognitiveservices account delete -n "$F0_ACC_NAME" -g "$F0_ACC_RG"; then
+        echo "    > törlés sikertelen, purge ugyanazzal a névvel"
+        if [ -n "$F0_ACC_LOC" ]; then
+          if ! az cognitiveservices account purge -n "$F0_ACC_NAME" -g "$F0_ACC_RG" -l "$F0_ACC_LOC"; then
+            fail "a meglévő F0 fiók törlése/purge sikertelen"; return 1
+          fi
+          echo "    > purge sikeres, várakozás 5 másodperc"
+          sleep 5
+        else
+          fail "a meglévő F0 fiók törlése sikertelen: hiányzik a régió purge-hoz"; return 1
+        fi
+      fi
+    else
+      fail "nem található a törlendő F0 fiók metaadata"; return 1
+    fi
+    mapfile -t ACCS < <(az cognitiveservices account list \
+      --query "[?kind=='SpeechServices'].{name:name,rg:resourceGroup,loc:location,sku:sku.name,ep:endpoints}" -o tsv 2>/dev/null || true)
+    F0_COUNT=0
+    F0_ACC_NAME=""; F0_ACC_RG=""; F0_ACC_LOC=""
   fi
 
   step 4 "Szabad régió keresése";
-  local -a USED_REGIONS=(); local -a AVAIL=(); local r u used LOC
+  local -a USED_REGIONS=(); local -a AVAIL=(); local -a FILTERED=(); local r u used LOC
   for rec in "${ACCS[@]}"; do USED_REGIONS+=("$(awk '{print $3}' <<<"$rec")"); done
   for r in "${ALL_REGIONS[@]}"; do
     used=false; for u in "${USED_REGIONS[@]}"; do [ "$r" = "$u" ] && { used=true; break; }; done
     [ "$used" = false ] && AVAIL+=("$r")
   done
+  if [ -n "$PREV_REGION" ]; then
+    for r in "${AVAIL[@]}"; do [ "$r" != "$PREV_REGION" ] && FILTERED+=("$r"); done
+    if [ "${#FILTERED[@]}" -gt 0 ]; then
+      AVAIL=("${FILTERED[@]}")
+    else
+      FILTERED=()
+      for r in "${ALL_REGIONS[@]}"; do [ "$r" != "$PREV_REGION" ] && FILTERED+=("$r"); done
+      [ "${#FILTERED[@]}" -gt 0 ] && AVAIL=("${FILTERED[@]}")
+    fi
+  fi
   [ "${#AVAIL[@]}" -eq 0 ] && AVAIL=("${ALL_REGIONS[@]}")
-  LOC="${AVAIL[0]}"; echo "  - Választott régió: ${LOC}"
+  local idx=0
+  [ "${#AVAIL[@]}" -gt 1 ] && idx=$(( RANDOM % ${#AVAIL[@]} ))
+  LOC="${AVAIL[$idx]}"; echo "  - Választott régió: ${LOC}"
 
   step 5 "Erőforráscsoport ellenőrzése/létrehozása";
   local RG="${RG_NAME}"
@@ -118,7 +171,7 @@ ttsauto() {
   fi
   if [ -n "$RG_LOC" ]; then LOC="$RG_LOC"; fi
 
-  step 6 "Új SpeechServices F0 fiók létrehozása ${LOC} régióban";
+  step 6 "új SpeechServices F0 fiók létrehozása ${LOC} régióban";
   local ACC="speech$(date +%Y%m%d%H%M%S)"
   if ! az cognitiveservices account create -n "$ACC" -g "$RG" -l "$LOC" --kind SpeechServices --sku F0 --yes >/dev/null; then
     fail "a SpeechServices F0 fiók létrehozása sikertelen"; return 1
@@ -131,3 +184,5 @@ ttsauto() {
   if [ -z "$BASE_URL" ]; then BASE_URL="https://${LOC}.api.cognitive.microsoft.com/"; fi
   echo "$KEY"; echo "${BASE_URL%/}/"; return 0
 }
+
+
