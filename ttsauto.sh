@@ -115,7 +115,27 @@ ttsauto() {
   if [ "${F0_COUNT}" -ge 1 ]; then
     if [ -n "$F0_ACC_NAME" ] && [ -n "$F0_ACC_RG" ]; then
       echo "  - F0 kulcs törlése: ${F0_ACC_NAME} (loc:${F0_ACC_LOC})"
-      if ! az cognitiveservices account delete -n "$F0_ACC_NAME" -g "$F0_ACC_RG"; then
+      if az cognitiveservices account delete -n "$F0_ACC_NAME" -g "$F0_ACC_RG"; then
+        echo "    > törlés elküldve, purge/várakozás indul"
+        if [ -n "$F0_ACC_LOC" ]; then
+          if az cognitiveservices account purge -n "$F0_ACC_NAME" -g "$F0_ACC_RG" -l "$F0_ACC_LOC"; then
+            echo "    > purge sikeres"
+          else
+            echo "    > purge sikertelen vagy már nem szükséges"
+          fi
+        fi
+        local wait_attempt=0
+        local wait_limit=12
+        while az cognitiveservices account show -n "$F0_ACC_NAME" -g "$F0_ACC_RG" >/dev/null 2>&1; do
+          wait_attempt=$((wait_attempt + 1))
+          [ "$wait_attempt" -ge "$wait_limit" ] && break
+          echo "    > várakozás a törlés befejezésére (${wait_attempt}/${wait_limit})"
+          sleep 5
+        done
+        if az cognitiveservices account show -n "$F0_ACC_NAME" -g "$F0_ACC_RG" >/dev/null 2>&1; then
+          fail "a meglévő F0 fiók törlése nem fejeződött be időben"; return 1
+        fi
+      else
         echo "    > törlés sikertelen, purge ugyanazzal a névvel"
         if [ -n "$F0_ACC_LOC" ]; then
           if ! az cognitiveservices account purge -n "$F0_ACC_NAME" -g "$F0_ACC_RG" -l "$F0_ACC_LOC"; then
@@ -130,10 +150,6 @@ ttsauto() {
     else
       fail "nem található a törlendő F0 fiók metaadata"; return 1
     fi
-    mapfile -t ACCS < <(az cognitiveservices account list \
-      --query "[?kind=='SpeechServices'].{name:name,rg:resourceGroup,loc:location,sku:sku.name,ep:endpoints}" -o tsv 2>/dev/null || true)
-    F0_COUNT=0
-    F0_ACC_NAME=""; F0_ACC_RG=""; F0_ACC_LOC=""
   fi
 
   step 4 "Szabad régió keresése";
@@ -150,26 +166,32 @@ ttsauto() {
     else
       FILTERED=()
       for r in "${ALL_REGIONS[@]}"; do [ "$r" != "$PREV_REGION" ] && FILTERED+=("$r"); done
-      [ "${#FILTERED[@]}" -gt 0 ] && AVAIL=("${FILTERED[@]}")
+      if [ "${#FILTERED[@]}" -gt 0 ]; then
+        AVAIL=("${FILTERED[@]}")
+      fi
     fi
   fi
-  [ "${#AVAIL[@]}" -eq 0 ] && AVAIL=("${ALL_REGIONS[@]}")
+  if [ "${#AVAIL[@]}" -eq 0 ]; then AVAIL=("${ALL_REGIONS[@]}"); fi
   local idx=0
-  [ "${#AVAIL[@]}" -gt 1 ] && idx=$(( RANDOM % ${#AVAIL[@]} ))
+  if [ "${#AVAIL[@]}" -gt 1 ]; then idx=$(( RANDOM % ${#AVAIL[@]} )); fi
   LOC="${AVAIL[$idx]}"; echo "  - Választott régió: ${LOC}"
 
   step 5 "Erőforráscsoport ellenőrzése/létrehozása";
   local RG="${RG_NAME}"
   local RG_LOC=""
+  local RG_CREATED=false
   if az group show -n "$RG" >/dev/null 2>&1; then
     echo "  - RG létezik: ${RG} (hely változatlan)"
     RG_LOC=$(az group show -n "$RG" --query location -o tsv 2>/dev/null || echo "")
+    if [ -n "$RG_LOC" ] && [ "$RG_LOC" != "$LOC" ]; then
+      echo "    > figyelmeztetés: meglévő RG más régióban (${RG_LOC}), a fiók létrehozása ettől függetlenül ${LOC} régióban történik"
+    fi
   else
     echo "  - RG létrehozása: ${RG} @ ${LOC}"
     az group create -n "$RG" -l "$LOC" >/dev/null 2>&1 || { fail "az erőforráscsoport létrehozása sikertelen"; return 1; }
     RG_LOC="$LOC"
+    RG_CREATED=true
   fi
-  if [ -n "$RG_LOC" ]; then LOC="$RG_LOC"; fi
 
   step 6 "új SpeechServices F0 fiók létrehozása ${LOC} régióban";
   local ACC="speech$(date +%Y%m%d%H%M%S)"
